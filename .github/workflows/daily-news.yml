@@ -1,6 +1,12 @@
 name: Daily WeChat News
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'news_digest.py'
+      - 'test_news_digest.py'
+      - '.github/workflows/daily-news.yml'
   schedule:
     # GitHub 默认 UTC：01:00 UTC = 北京时间 09:00。
     - cron: '0 1 * * *'
@@ -57,7 +63,7 @@ jobs:
           # 不使用 restore-keys，防止混入其他日期或分支的状态。
 
       - name: Preview digest
-        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'preview'
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'preview')
         run: python news_digest.py --preview
 
       - name: Send digest to WeChat

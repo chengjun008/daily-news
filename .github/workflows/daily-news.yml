@@ -1,0 +1,80 @@
+name: Daily WeChat News
+
+on:
+  schedule:
+    # GitHub 默认 UTC：01:00 UTC = 北京时间 09:00。
+    - cron: '0 1 * * *'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'preview 仅预览；send 发送今天早报到微信'
+        type: choice
+        required: true
+        default: preview
+        options:
+          - preview
+          - send
+
+permissions:
+  contents: read
+
+concurrency:
+  group: daily-wechat-news
+  cancel-in-progress: false
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      TZ: Asia/Shanghai
+      PYTHONUTF8: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Run offline tests
+        run: python -m unittest -v test_news_digest
+
+      - name: Determine Beijing date
+        id: day
+        run: |
+          python -c "from datetime import datetime,timezone,timedelta; import os; day=datetime.now(timezone(timedelta(hours=8))).date().isoformat(); open(os.environ['GITHUB_OUTPUT'],'a',encoding='utf-8').write('date='+day+'\n')"
+
+      - name: Restore today's delivery state
+        id: state
+        uses: actions/cache/restore@v5
+        with:
+          path: data/state.json
+          key: wechat-delivery-v1-${{ steps.day.outputs.date }}
+          # 不使用 restore-keys，防止混入其他日期或分支的状态。
+
+      - name: Preview digest
+        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'preview'
+        run: python news_digest.py --preview
+
+      - name: Send digest to WeChat
+        id: send
+        if: github.event_name == 'schedule' || inputs.mode == 'send'
+        env:
+          SERVERCHAN_SENDKEY: ${{ secrets.SERVERCHAN_SENDKEY }}
+        run: python news_digest.py --send
+
+      - name: Save today's delivery state
+        if: steps.send.outcome == 'success' && steps.state.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: data/state.json
+          key: wechat-delivery-v1-${{ steps.day.outputs.date }}
+
+      - name: Show digest in run summary
+        if: always()
+        run: |
+          python -c "from pathlib import Path; import os; p=Path('data/latest.md'); text=p.read_text(encoding='utf-8') if p.exists() else '未生成新简报：若当日已发送则跳过；若任务失败请查看上方日志。'; open(os.environ['GITHUB_STEP_SUMMARY'],'a',encoding='utf-8').write(text+'\n')"
